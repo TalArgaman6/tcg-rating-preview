@@ -416,10 +416,21 @@ function CardFace({
   onSelect: (id: string) => void;
 }) {
   const label = side === "front" ? "Front" : "Back";
+  const [imageRatio, setImageRatio] = useState<number | null>(null);
+  const view = displayWindow(bounds, imageRatio);
   return (
     <div className={`flight-face flight-${side}${away ? " is-away" : ""}`}>
       <div className="flight-sheet">
-        <img src={src} alt={`${label} of the card`} draggable={false} style={plateStyle(bounds)} />
+        <img
+          src={src}
+          alt={`${label} of the card`}
+          draggable={false}
+          style={plateStyle(view)}
+          onLoad={(event) => {
+            const img = event.currentTarget;
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) setImageRatio(img.naturalWidth / img.naturalHeight);
+          }}
+        />
         {defects.map((defect) => (
           <button
             key={defect.id}
@@ -428,7 +439,7 @@ function CardFace({
             data-kind={defect.kind}
             data-evidence={defect.evidence}
             data-side={defect.side}
-            style={markBox(defect)}
+            style={markBox(defect, bounds, view)}
             aria-pressed={defect.id === active}
             aria-label={defect.title}
             onClick={() => onSelect(defect.id)}
@@ -439,26 +450,65 @@ function CardFace({
   );
 }
 
+const CARD_FACE = 63 / 88;
+
+function displayWindow(
+  bounds: { x: number; y: number; w: number; h: number },
+  imageRatio: number | null,
+): { x: number; y: number; w: number; h: number } {
+  if (!(bounds.w > 0.2 && bounds.h > 0.2)) return { x: 0, y: 0, w: 1, h: 1 };
+  const ratio = imageRatio && imageRatio > 0 ? imageRatio : CARD_FACE;
+  let { x, y, w, h } = bounds;
+  const pixelRatio = (w / h) * ratio;
+  if (pixelRatio > CARD_FACE * 1.02) {
+    const targetH = (w * ratio) / CARD_FACE;
+    const grow = Math.max(0, targetH - h);
+    y -= grow / 2;
+    h += grow;
+  } else if (pixelRatio < CARD_FACE * 0.98) {
+    const targetW = (h / ratio) * CARD_FACE;
+    const grow = Math.max(0, targetW - w);
+    x -= grow / 2;
+    w += grow;
+  }
+  const padX = w * 0.08;
+  const padY = h * 0.08;
+  x -= padX;
+  y -= padY;
+  w += padX * 2;
+  h += padY * 2;
+  if (x < 0) {
+    w += x;
+    x = 0;
+  }
+  if (y < 0) {
+    h += y;
+    y = 0;
+  }
+  if (x + w > 1) w = 1 - x;
+  if (y + h > 1) h = 1 - y;
+  return { x, y, w, h };
+}
+
 function plateStyle(bounds: { x: number; y: number; w: number; h: number }) {
-  const located = bounds.w > 0.2 && bounds.h > 0.2;
-  const w = located ? bounds.w : 1;
-  const h = located ? bounds.h : 1;
-  const x = located ? bounds.x : 0;
-  const y = located ? bounds.y : 0;
   return {
-    width: `${(100 / w).toFixed(3)}%`,
-    height: `${(100 / h).toFixed(3)}%`,
-    left: `${((-x / w) * 100).toFixed(3)}%`,
-    top: `${((-y / h) * 100).toFixed(3)}%`,
+    width: `${(100 / bounds.w).toFixed(3)}%`,
+    height: `${(100 / bounds.h).toFixed(3)}%`,
+    left: `${((-bounds.x / bounds.w) * 100).toFixed(3)}%`,
+    top: `${((-bounds.y / bounds.h) * 100).toFixed(3)}%`,
   };
 }
 
-function markBox(defect: Defect) {
+function markBox(
+  defect: Defect,
+  bounds: { x: number; y: number; w: number; h: number },
+  view: { x: number; y: number; w: number; h: number },
+) {
   return {
-    left: `${defect.x * 100}%`,
-    top: `${defect.y * 100}%`,
-    width: `${Math.max(defect.w * 100, 4)}%`,
-    height: `${Math.max(defect.h * 100, 3)}%`,
+    left: `${((bounds.x + defect.x * bounds.w - view.x) / view.w) * 100}%`,
+    top: `${((bounds.y + defect.y * bounds.h - view.y) / view.h) * 100}%`,
+    width: `${Math.max((defect.w * bounds.w / view.w) * 100, 4)}%`,
+    height: `${Math.max((defect.h * bounds.h / view.h) * 100, 3)}%`,
   };
 }
 
