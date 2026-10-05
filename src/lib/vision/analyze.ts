@@ -24,6 +24,8 @@ import {
 
 export interface CardVision {
   rectified: Raster;
+  /** Detected card rectangle, as fractions of the source photo. */
+  bounds: { x: number; y: number; w: number; h: number };
   metrics: SideMetrics;
   defects: Defect[];
 }
@@ -108,7 +110,17 @@ export function analyzeRaster(
     surface,
     quality,
   };
-  return { rectified, metrics, defects };
+  return {
+    rectified,
+    bounds: {
+      x: located.rect.x / source.width,
+      y: located.rect.y / source.height,
+      w: located.rect.w / source.width,
+      h: located.rect.h / source.height,
+    },
+    metrics,
+    defects,
+  };
 }
 
 interface BorderMeasure {

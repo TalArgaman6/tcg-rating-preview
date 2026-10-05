@@ -572,7 +572,7 @@ function predictCgc(reading: Reading, confidence: number): GradePrediction {
     range: [clampHalf(Math.max(1, grade - drop)), grade],
     confidence: cgcConfidence,
     confidenceLabel: confidenceLabel(cgcConfidence),
-    summary: `Predicted CGC ${formatGrade(grade, true)} ${cgcTitle(grade)}. Pristine 10 is a separate label and is not used here.`,
+    summary: `Predicted CGC ${formatGrade(grade, true)} ${cgcTitle(grade)}. ${frontRatio ? `Front centering measures ${frontRatio}. ` : ""}Pristine 10 is a separate label and is not used here.`,
     reasons: reasons.length ? reasons : ["No measured flaw in these photos forces CGC below this grade."],
     notAssessed: notAssessed(reading, "CGC's 60/40, 65/35, and 70/30 centering lines are published for sports and non-sports cards. They are applied here as that page's numeric scale and labeled as such."),
     labelNote: STANDARDS.cgc.note,

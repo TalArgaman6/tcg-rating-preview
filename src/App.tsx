@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Report } from "./components/Report";
 import { collectFeatures } from "./lib/features";
 import { assessCard } from "./lib/grading/predict";
 import { searchCards } from "./lib/identity/catalog";
 import { readCardText } from "./lib/identity/readText";
+import { frameCard, renderPlate } from "./lib/cardFrame";
 import { fileToRaster, rasterToDataUrl } from "./lib/images";
 import { estimateMarket, preferredFinish } from "./lib/market/value";
 import { practiceBack, practiceFront } from "./lib/sampleCard";
@@ -15,6 +16,8 @@ export interface Session {
   practice: boolean;
   frontUrl: string;
   backUrl: string;
+  frontBounds: { x: number; y: number; w: number; h: number };
+  backBounds: { x: number; y: number; w: number; h: number };
   front: SideMetrics;
   back: SideMetrics;
   defects: Defect[];
@@ -203,8 +206,10 @@ function buildSession(frontRaster: Raster, backRaster: Raster, practice: boolean
   const market = estimateMarket(null, null);
   return {
     practice,
-    frontUrl: rasterToDataUrl(frontVision.rectified),
-    backUrl: rasterToDataUrl(backVision.rectified),
+    frontUrl: rasterToDataUrl(frontRaster),
+    backUrl: rasterToDataUrl(backRaster),
+    frontBounds: frontVision.bounds,
+    backBounds: backVision.bounds,
     front: frontVision.metrics,
     back: backVision.metrics,
     defects,
@@ -243,8 +248,8 @@ function Upload({
   return (
     <section className="intake">
       <div className="drops">
-        <Drop label="Front" file={frontFile} onFile={onFront} />
-        <Drop label="Back" file={backFile} onFile={onBack} />
+        <CardSlot label="Front" file={frontFile} onFile={onFront} />
+        <CardSlot label="Back" file={backFile} onFile={onBack} />
       </div>
       <div className="intake-copy">
         <h2>Both sides, then a closer look if the first photos are soft.</h2>
@@ -268,28 +273,65 @@ function Upload({
   );
 }
 
-function Drop({ label, file, onFile }: { label: string; file: File | null; onFile: (file: File) => void }) {
+function CardSlot({ label, file, onFile }: { label: string; file: File | null; onFile: (file: File) => void }) {
+  const [plate, setPlate] = useState<string | null>(null);
+  const [framing, setFraming] = useState(false);
+  const [frameError, setFrameError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!file) {
+      setPlate(null);
+      setFrameError(null);
+      return;
+    }
+    let cancel = false;
+    setFraming(true);
+    setFrameError(null);
+    fileToRaster(file, 1200)
+      .then((raster) => {
+        if (cancel) return;
+        setPlate(renderPlate(frameCard(raster), "frost"));
+      })
+      .catch((caught: unknown) => {
+        if (cancel) return;
+        setPlate(null);
+        setFrameError(caught instanceof Error ? caught.message : "The photo could not be framed.");
+      })
+      .finally(() => {
+        if (!cancel) setFraming(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [file]);
+
   return (
-    <label
-      className={file ? "drop has-file" : "drop"}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        event.preventDefault();
-        const next = event.dataTransfer.files[0];
-        if (next) onFile(next);
-      }}
-    >
-      <span>{label}</span>
-      <strong>{file ? file.name : "Drop a photo or click to choose"}</strong>
-      <input
-        type="file"
-        accept="image/*"
-        onChange={(event) => {
-          const next = event.target.files?.[0];
+    <div className="slot">
+      <label
+        className={plate ? "drop card-frame has-file" : "drop card-frame"}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          const next = event.dataTransfer.files[0];
           if (next) onFile(next);
         }}
-      />
-    </label>
+      >
+        {plate ? <img className="crop" src={plate} alt="" /> : <span className="frame-guide" aria-hidden="true" />}
+        <span className="slot-copy">
+          <span>{label}</span>
+          <strong>{framing ? "Finding the card" : file ? "Replace photo" : "Drop a photo or click to choose"}</strong>
+        </span>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(event) => {
+            const next = event.target.files?.[0];
+            if (next) onFile(next);
+          }}
+        />
+      </label>
+      {frameError ? <p className="error">{frameError}</p> : null}
+    </div>
   );
 }
 

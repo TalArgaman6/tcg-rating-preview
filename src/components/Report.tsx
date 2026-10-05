@@ -3,7 +3,7 @@ import type { Session } from "../App";
 import { STANDARDS } from "../lib/grading/standards";
 import { finishChoices, gradeSearchHint } from "../lib/market/value";
 import { money } from "../lib/format";
-import type { CloseupKind, Defect, TcgCard } from "../types";
+import type { CloseupKind, Defect, GradePrediction, TcgCard } from "../types";
 
 export function Report({
   session,
@@ -42,63 +42,24 @@ export function Report({
       <p className="banner">{session.ocrNote}</p>
       {working ? <p className="working">{working}</p> : null}
 
-      <section className="viewers">
-        <Viewer title="Front" src={session.frontUrl} defects={frontMarks} />
-        <Viewer title="Back" src={session.backUrl} defects={backMarks} />
-      </section>
+      <CardFlight
+        frontSrc={session.frontUrl}
+        backSrc={session.backUrl}
+        frontMarks={frontMarks}
+        backMarks={backMarks}
+        frontBounds={session.frontBounds ?? { x: 0, y: 0, w: 1, h: 1 }}
+        backBounds={session.backBounds ?? { x: 0, y: 0, w: 1, h: 1 }}
+      />
 
       <section className="block">
         <div className="section-head">
           <h2>Predicted grades</h2>
-          <p>Each company is scored on its own published scale. The high end of a band is the prediction. The low end is how far it could fall once the card is in hand.</p>
+          <p>Each company is scored on its own published scale. Open a card for the full reasoning.</p>
         </div>
         <div className="slabs">
-          {session.opinion.grades.map((grade) => {
-            const standard = STANDARDS[grade.company];
-            return (
-              <article key={grade.company} className={`slab slab-${grade.company}`}>
-                <header>
-                  <h3>{standard.full}</h3>
-                  <span>{grade.confidenceLabel}</span>
-                </header>
-                <p className="eyebrow">Predicted {grade.companyName}</p>
-                <p className="grade-num">{grade.gradeText}</p>
-                <p className="grade-title">{grade.title}</p>
-                <p className="band">
-                  Likely band {formatBand(grade.range[0], grade.company !== "psa")}–{formatBand(grade.range[1], grade.company !== "psa")}
-                </p>
-                <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(grade.confidence * 100)} aria-label={`${grade.companyName} photo confidence`}>
-                  <span style={{ width: `${Math.round(grade.confidence * 100)}%` }} />
-                </div>
-                <p className="summary">{grade.summary}</p>
-                <ul>
-                  {grade.reasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
-                  ))}
-                </ul>
-                {grade.subgrades ? (
-                  <dl className="subs">
-                    {grade.subgrades.map((sub) => (
-                      <div key={sub.label}>
-                        <dt>{sub.label}</dt>
-                        <dd>{sub.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : null}
-                <p className="fine">{grade.labelNote}</p>
-                <a href={standard.url} target="_blank" rel="noreferrer">
-                  {standard.name} published scale
-                </a>
-                <h4>Not established from these photos</h4>
-                <ul className="quiet-list">
-                  {grade.notAssessed.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-            );
-          })}
+          {session.opinion.grades.map((grade) => (
+            <GradeCard key={grade.company} grade={grade} />
+          ))}
         </div>
       </section>
 
@@ -302,91 +263,126 @@ export function Report({
   );
 }
 
-function Viewer({ title, src, defects }: { title: string; src: string; defects: Defect[] }) {
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [active, setActive] = useState<string | null>(defects[0]?.id ?? null);
-  const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-  const frame = useRef<HTMLDivElement>(null);
-  const selected = defects.find((defect) => defect.id === active) ?? null;
+function CardFlight({
+  frontSrc,
+  backSrc,
+  frontMarks,
+  backMarks,
+  frontBounds,
+  backBounds,
+}: {
+  frontSrc: string;
+  backSrc: string;
+  frontMarks: Defect[];
+  backMarks: Defect[];
+  frontBounds: { x: number; y: number; w: number; h: number };
+  backBounds: { x: number; y: number; w: number; h: number };
+}) {
+  const marks = [...frontMarks, ...backMarks];
+  const reduced = usePrefersReducedMotion();
+  const faceRef = useRef<"front" | "back">("front");
+  const prefersStill = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [yaw, setYaw] = useState(prefersStill ? 0 : -14);
+  const [pitch, setPitch] = useState(prefersStill ? 0 : 10);
+  const [active, setActive] = useState<string | null>(marks[0]?.id ?? null);
+  const selected = marks.find((defect) => defect.id === active) ?? null;
+  const showingBack = Math.cos((yaw * Math.PI) / 180) < 0;
 
   useEffect(() => {
-    const node = frame.current;
-    if (!node) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      setZoom((current) => clamp(current * (event.deltaY > 0 ? 0.92 : 1.08), 1, 5));
-    };
-    node.addEventListener("wheel", onWheel, { passive: false });
-    return () => node.removeEventListener("wheel", onWheel);
-  }, []);
+    if (!reduced) return;
+    setPitch(0);
+    setYaw(faceRef.current === "back" ? 180 : 0);
+  }, [reduced]);
+
+  function settle(side: "front" | "back") {
+    faceRef.current = side;
+    setYaw(side === "back" ? (reduced ? 180 : 194) : reduced ? 0 : -14);
+    setPitch(reduced ? 0 : 10);
+  }
+
+  function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (reduced) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const nx = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const ny = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    setPitch((ny - 0.5) * 14);
+    if (faceRef.current === "back") {
+      if (nx < 0.18) {
+        faceRef.current = "front";
+        setYaw(nx * 20);
+        return;
+      }
+      setYaw(180 + (nx - 0.5) * 16);
+      return;
+    }
+    const spun = nx < 0.38 ? (nx / 0.38) * 20 : 20 + ((nx - 0.38) / 0.62) * 160;
+    if (spun > 90) faceRef.current = "back";
+    setYaw(spun);
+  }
+
+  function choose(id: string, side: Defect["side"]) {
+    setActive(id);
+    if (side === "front" || side === "back") settle(side);
+  }
 
   return (
-    <article className="viewer">
-      <header>
-        <h2>{title}</h2>
-        <div>
-          <button type="button" onClick={() => setZoom((current) => clamp(current / 1.2, 1, 5))} aria-label={`Zoom out ${title}`}>
-            −
-          </button>
-          <button type="button" onClick={() => setZoom((current) => clamp(current * 1.2, 1, 5))} aria-label={`Zoom in ${title}`}>
-            +
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setZoom(1);
-              setPan({ x: 0, y: 0 });
-            }}
+    <section className="card-flight" aria-label="Card">
+      <div className="flight-stage">
+        <div
+          className="flight-hit"
+          onPointerMove={onPointerMove}
+          onPointerLeave={() => {
+            if (!reduced) settle(faceRef.current);
+          }}
+        >
+          <div
+            className="flight-card"
+            data-facing={showingBack ? "back" : "front"}
+            data-yaw={yaw.toFixed(1)}
+            style={{ transform: `rotateX(${pitch.toFixed(2)}deg) rotateY(${yaw.toFixed(2)}deg)` }}
           >
-            Reset
-          </button>
-        </div>
-      </header>
-      <div
-        className="stage"
-        ref={frame}
-        onDoubleClick={() => {
-          setZoom(1);
-          setPan({ x: 0, y: 0 });
-        }}
-        onPointerDown={(event) => {
-          if ((event.target as HTMLElement).closest(".mark")) return;
-          drag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={(event) => {
-          if (!drag.current) return;
-          setPan({ x: drag.current.panX + event.clientX - drag.current.x, y: drag.current.panY + event.clientY - drag.current.y });
-        }}
-        onPointerUp={() => {
-          drag.current = null;
-        }}
-      >
-        <div className="world" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
-          <img src={src} alt={`${title} of the card, cropped to the card edges`} />
-          {defects.map((defect) => (
-            <button
-              key={defect.id}
-              type="button"
-              className={defect.id === active ? "mark is-on" : "mark"}
-              data-kind={defect.kind}
-              data-evidence={defect.evidence}
-              style={{ left: `${defect.x * 100}%`, top: `${defect.y * 100}%`, width: `${Math.max(defect.w * 100, 4)}%`, height: `${Math.max(defect.h * 100, 3)}%` }}
-              aria-pressed={defect.id === active}
-              aria-label={defect.title}
-              onClick={() => setActive(defect.id)}
+            <div className="flight-core" aria-hidden="true" />
+            <CardFace
+              side="front"
+              src={frontSrc}
+              bounds={frontBounds}
+              defects={frontMarks}
+              active={active}
+              away={showingBack}
+              onSelect={(id) => {
+                setActive(id);
+                if (faceRef.current !== "front") settle("front");
+              }}
             />
-          ))}
+            <CardFace
+              side="back"
+              src={backSrc}
+              bounds={backBounds}
+              defects={backMarks}
+              active={active}
+              away={!showingBack}
+              onSelect={(id) => {
+                setActive(id);
+                if (faceRef.current !== "back") settle("back");
+              }}
+            />
+          </div>
         </div>
       </div>
-      <p className="fine">Scroll to zoom. Drag to move. Click a mark.</p>
-      {defects.length === 0 ? <p>No mark on this side was strong enough to draw. That is not a gem mint declaration.</p> : null}
+      {reduced ? (
+        <button type="button" className="flight-flip" onClick={() => settle(showingBack ? "front" : "back")}>
+          {showingBack ? "Show the front" : "Show the back"}
+        </button>
+      ) : null}
+      <p className="fine">{reduced ? "Use the button to see the other side. Click a mark." : "Move across the card to turn it. Click a mark."}</p>
+      {frontMarks.length === 0 ? <p>No mark on the front was strong enough to draw. That is not a gem mint declaration.</p> : null}
+      {backMarks.length === 0 ? <p>No mark on the back was strong enough to draw. That is not a gem mint declaration.</p> : null}
       <ul className="marks">
-        {defects.map((defect) => (
+        {marks.map((defect) => (
           <li key={defect.id}>
-            <button type="button" className={defect.id === active ? "is-on" : ""} onClick={() => setActive(defect.id)}>
-              <strong>{defect.title}</strong>
+            <button type="button" className={defect.id === active ? "is-on" : ""} onClick={() => choose(defect.id, defect.side)}>
+              <strong>{defect.side === "back" ? "Back" : "Front"} · {defect.title}</strong>
               <em>{defect.evidence === "visible" ? "Visible" : "Uncertain — not used to lower the grade by itself"}</em>
             </button>
           </li>
@@ -398,8 +394,83 @@ function Viewer({ title, src, defects }: { title: string; src: string; defects: 
           <p>{selected.gradeImpact}</p>
         </div>
       ) : null}
-    </article>
+    </section>
   );
+}
+
+function CardFace({
+  side,
+  src,
+  bounds,
+  defects,
+  active,
+  away,
+  onSelect,
+}: {
+  side: "front" | "back";
+  src: string;
+  bounds: { x: number; y: number; w: number; h: number };
+  defects: Defect[];
+  active: string | null;
+  away: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const label = side === "front" ? "Front" : "Back";
+  return (
+    <div className={`flight-face flight-${side}${away ? " is-away" : ""}`}>
+      <div className="flight-sheet">
+        <img src={src} alt={`${label} of the card`} draggable={false} style={plateStyle(bounds)} />
+        {defects.map((defect) => (
+          <button
+            key={defect.id}
+            type="button"
+            className={defect.id === active ? "mark is-on" : "mark"}
+            data-kind={defect.kind}
+            data-evidence={defect.evidence}
+            data-side={defect.side}
+            style={markBox(defect)}
+            aria-pressed={defect.id === active}
+            aria-label={defect.title}
+            onClick={() => onSelect(defect.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function plateStyle(bounds: { x: number; y: number; w: number; h: number }) {
+  const located = bounds.w > 0.2 && bounds.h > 0.2;
+  const w = located ? bounds.w : 1;
+  const h = located ? bounds.h : 1;
+  const x = located ? bounds.x : 0;
+  const y = located ? bounds.y : 0;
+  return {
+    width: `${(100 / w).toFixed(3)}%`,
+    height: `${(100 / h).toFixed(3)}%`,
+    left: `${((-x / w) * 100).toFixed(3)}%`,
+    top: `${((-y / h) * 100).toFixed(3)}%`,
+  };
+}
+
+function markBox(defect: Defect) {
+  return {
+    left: `${defect.x * 100}%`,
+    top: `${defect.y * 100}%`,
+    width: `${Math.max(defect.w * 100, 4)}%`,
+    height: `${Math.max(defect.h * 100, 3)}%`,
+  };
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
 }
 
 function CloseupControl({ kind, label, onCloseup }: { kind: CloseupKind; label: string; onCloseup: (kind: CloseupKind, file: File) => void }) {
@@ -429,6 +500,110 @@ function valueLabel(value: "unknown" | "unlikely" | "cited-from-market" | "not-a
   if (value === "not-a-premium") return "Not a separate premium";
   if (value === "unlikely") return "Unlikely to add value";
   return "No price effect claimed";
+}
+
+function GradeCard({ grade }: { grade: GradePrediction }) {
+  const [open, setOpen] = useState(false);
+  const standard = STANDARDS[grade.company];
+  const brief = cardBrief(grade);
+  const halves = grade.company !== "psa";
+  const detailsId = `${grade.company}-details`;
+
+  return (
+    <article className={`slab slab-${grade.company}`}>
+      <h3 className="sr-only">{standard.full}</h3>
+      <div className="grade-row">
+        <CompanyMark company={grade.company} />
+        <div>
+          <p className="grade-num">{grade.gradeText}</p>
+          <p className="grade-title">{grade.title}</p>
+        </div>
+      </div>
+      <p className="band">
+        Likely band {formatBand(grade.range[0], halves)}–{formatBand(grade.range[1], halves)}
+      </p>
+      <dl className="brief">
+        <div>
+          <dt>In its favor</dt>
+          <dd>{brief.good}</dd>
+        </div>
+        <div>
+          <dt>Holding it back</dt>
+          <dd>{brief.bad}</dd>
+        </div>
+      </dl>
+      <button type="button" className="read-more" aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen((value) => !value)}>
+        {open ? "Show less" : "Read more"}
+      </button>
+      {open ? (
+        <div className="slab-more" id={detailsId}>
+          <p className="summary">{grade.summary}</p>
+          <p className="fine">{grade.confidenceLabel}</p>
+          <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(grade.confidence * 100)} aria-label={`${grade.companyName} photo confidence`}>
+            <span style={{ width: `${Math.round(grade.confidence * 100)}%` }} />
+          </div>
+          <ul>
+            {grade.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+          {grade.subgrades ? (
+            <dl className="subs">
+              {grade.subgrades.map((sub) => (
+                <div key={sub.label}>
+                  <dt>{sub.label}</dt>
+                  <dd>{sub.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          {grade.labelNote ? <p className="fine">{grade.labelNote}</p> : null}
+          <a href={standard.url} target="_blank" rel="noreferrer">
+            {standard.name} published scale
+          </a>
+          <h4>Not established from these photos</h4>
+          <ul className="quiet-list">
+            {grade.notAssessed.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function CompanyMark({ company }: { company: GradePrediction["company"] }) {
+  const label = company === "psa" ? "PSA" : company === "bgs" ? "BGS" : "CGC";
+  const name = company === "bgs" ? "Beckett" : label;
+  return (
+    <span className={`company-mark mark-${company}`} role="img" aria-label={name}>
+      {label}
+    </span>
+  );
+}
+
+function cardBrief(grade: GradePrediction): { good: string; bad: string } {
+  const bad = grade.reasons.map(opening).slice(0, 2).join(" ");
+  const goodBits: string[] = [];
+  const centering = grade.summary.match(/Front centering measures [^.]+\./);
+  if (centering && !grade.reasons.some((reason) => /centering/i.test(reason))) {
+    goodBits.push(centering[0].replace("Front centering measures ", "Centering is "));
+  }
+  for (const sub of grade.subgrades ?? []) {
+    const value = Number(sub.value);
+    if (value >= 9.5) goodBits.push(`${sub.label} is ${sub.value}.`);
+  }
+  return {
+    good: goodBits.slice(0, 2).join(" ") || "The clean areas of the card still support this grade.",
+    bad: bad || "Nothing measured in these photos pulls the grade down.",
+  };
+}
+
+function opening(text: string): string {
+  const sentence = text.split(/(?<=\.)\s/)[0] ?? text;
+  if (sentence.length <= 140) return sentence;
+  return `${sentence.slice(0, 137).trim()}…`;
 }
 
 function formatBand(grade: number, halves: boolean): string {
