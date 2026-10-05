@@ -72,7 +72,7 @@ export function App() {
 
   async function identify(front: Raster, current: Session) {
     try {
-      const text = await readCardText(analyzeRaster(front, { side: "front" }).rectified);
+      const text = await readCardText(front);
       if (text.name?.toLowerCase() === "practice") return;
       const query = [text.name, text.number].filter(Boolean).join(" ");
       const note = query
