@@ -1,40 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "../App";
 import { STANDARDS } from "../lib/grading/standards";
-import { finishChoices, gradeSearchHint } from "../lib/market/value";
-import { money } from "../lib/format";
-import type { CloseupKind, Defect, GradePrediction, TcgCard } from "../types";
+import type { CloseupKind, Defect, GradePrediction } from "../types";
 
 export function Report({
   session,
-  searching,
-  searchError,
   working,
-  onSearch,
-  onSelect,
-  onVariant,
   onCloseup,
   onReset,
 }: {
   session: Session;
-  searching: boolean;
-  searchError: string | null;
   working: string | null;
-  onSearch: (query: string) => void;
-  onSelect: (card: TcgCard) => void;
-  onVariant: (variant: string) => void;
   onCloseup: (kind: CloseupKind, file: File) => void;
   onReset: () => void;
 }) {
-  const [query, setQuery] = useState("");
   const frontMarks = session.defects.filter((defect) => defect.side === "front");
   const backMarks = session.defects.filter((defect) => defect.side === "back");
-  const choices = session.card ? finishChoices(session.card) : [];
 
   return (
     <main className="sheet">
       <div className="sheet-bar">
-        <p>{session.practice ? "Practice card" : "Your photos"}</p>
+        <p>Your photos</p>
         <button type="button" className="quiet" onClick={onReset}>
           Start over
         </button>
@@ -132,106 +118,16 @@ export function Report({
 
       <section className="block">
         <div className="section-head">
-          <h2>Market value</h2>
-          <p>Raw price and graded price are different products. {gradeSearchHint(session.opinion.grades)} are the grades to look up, not prices.</p>
-        </div>
-        <form
-          className="search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (query.trim()) onSearch(query.trim());
-          }}
-        >
-          <label htmlFor="card-search">Find the printing</label>
-          <div>
-            <input
-              id="card-search"
-              value={query}
-              placeholder="Squirtle base, or Charizard 4/102"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <button type="submit" className="primary" disabled={searching || !query.trim()}>
-              {searching ? "Searching" : "Search"}
-            </button>
-          </div>
-        </form>
-        {searchError ? <p className="error">{searchError}</p> : null}
-        {session.candidates.length > 0 ? (
-          <div className="candidates">
-            {session.candidates.map((card) => (
-              <button type="button" key={card.id} className={session.card?.id === card.id ? "candidate is-on" : "candidate"} onClick={() => onSelect(card)}>
-                {card.images?.small ? <img src={card.images.small} alt="" /> : <span className="thumb" />}
-                <span>
-                  <strong>{card.name}</strong>
-                  <em>
-                    {card.set.name} · {card.number}
-                    {card.set.printedTotal ? `/${card.set.printedTotal}` : ""} · {card.rarity ?? "Rarity unlisted"}
-                  </em>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="prices">
-          <article>
-            <h3>Raw card</h3>
-            {session.market.status === "ready" && session.market.raw ? (
-              <>
-                <p className="price">{money(session.market.raw.market, "USD")}</p>
-                <p>
-                  TCGplayer market for {session.market.raw.variant}. Low {money(session.market.raw.low, "USD")}, high {money(session.market.raw.high, "USD")}.
-                  {session.market.raw.updatedAt ? ` Updated ${session.market.raw.updatedAt}.` : ""} This is an asking-market snapshot, not a promise of what the next sale brings.
-                </p>
-                {choices.length > 1 ? (
-                  <div className="variants">
-                    {choices.map((choice) => (
-                      <button type="button" key={choice.key} className={session.variant === choice.key ? "is-on" : ""} onClick={() => onVariant(choice.key)}>
-                        {choice.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <p>{session.market.status === "no-price" ? "This printing has no TCGplayer price in the catalog right now." : "Confirm the printing before a raw price is shown. A guessed card would produce a guessed price."}</p>
-            )}
-            {session.market.eur?.trend != null ? <p>Cardmarket trend {money(session.market.eur.trend, "EUR")}{session.market.eur.updatedAt ? `, updated ${session.market.eur.updatedAt}` : ""}.</p> : null}
-            {session.card ? (
-              <p className="fine">
-                {session.card.name}, {session.card.set.name}
-                {session.card.set.releaseDate ? ` (${session.card.set.releaseDate})` : ""}. {session.card.artist ? `Illustrated by ${session.card.artist}. ` : ""}
-                English catalog only. A Japanese or other-language printing is a different market.
-              </p>
-            ) : null}
-          </article>
-          <article>
-            <h3>After grading</h3>
-            <p className="price quiet-price">Not estimated</p>
-            <p>{session.market.gradedNote}</p>
-            {session.market.searchLinks.length > 0 ? (
-              <div className="links">
-                {session.market.searchLinks.map((link) => (
-                  <a key={link.label} href={link.href} target="_blank" rel="noreferrer">
-                    {link.label}
-                  </a>
-                ))}
-              </div>
-            ) : null}
-          </article>
-        </div>
-      </section>
-
-      <section className="block">
-        <div className="section-head">
           <h2>What the photos still cannot settle</h2>
-          <p>Add a closer photo only for the area named. A clean close-up raises confidence. It does not turn the card into a pristine 10.</p>
+          <p>A photo is not a grade, and it cannot prove the card is genuine or unaltered.</p>
         </div>
-        <ul className="limits">
-          {session.opinion.limits.map((limit) => (
-            <li key={limit}>{limit}</li>
-          ))}
-        </ul>
+        {session.opinion.limits.length > 0 ? (
+          <ul className="limits">
+            {session.opinion.limits.map((limit) => (
+              <li key={limit}>{limit}</li>
+            ))}
+          </ul>
+        ) : null}
         {session.opinion.requests.length > 0 ? (
           <div className="requests">
             {session.opinion.requests.map((request) => (

@@ -625,38 +625,33 @@ function factorRows(reading: Reading, psaGrade: number, bgs: GradePrediction): F
 }
 
 function limits(front: SideMetrics, back: SideMetrics, reading: Reading): string[] {
-  const lines = [
-    "A photograph is not a grade. PSA, Beckett, and CGC decide after they have the card.",
-    "This desk does not authenticate the card, certify a misprint, or detect trimming and recoloring.",
-    "The grade, any collector demand, and the price are three separate judgments.",
-    ...front.quality.notes,
-    ...back.quality.notes,
-  ];
-  if (!reading.surface.reliable && !reading.surfaceReviewed) {
-    lines.push("Surface gloss and hairline scratches are only partly visible, so they were not used to push the grade down or up.");
+  const lines: string[] = [];
+  if (front.quality.focus !== "sharp" || back.quality.focus !== "sharp" || front.quality.perspective || back.quality.perspective) {
+    lines.push("Soft focus or a tilted photo hides small marks.");
   }
-  if (!front.centering.reliable) lines.push("Front centering was left out of the numeric grade.");
-  return unique(lines);
+  if (!reading.surface.reliable && !reading.surfaceReviewed) lines.push("Scratches and gloss are only partly visible.");
+  if (!front.centering.reliable || !back.centering.reliable) lines.push("Centering could not be measured from this photo.");
+  return lines;
 }
 
 function requests(front: SideMetrics, back: SideMetrics, reading: Reading, closeups: CloseupResult[]): { priority: "needed" | "optional"; text: string }[] {
   const items: { priority: "needed" | "optional"; text: string }[] = [];
   const asked = new Set(closeups.filter((shot) => !shot.inconclusive).map((shot) => shot.kind));
   if (reading.focus !== "sharp" || front.quality.shortSide < 900 || back.quality.shortSide < 900) {
-    items.push({ priority: "needed", text: "Retake both sides straight-on, with the card large in the frame and a little of the table showing around all four edges." });
+    items.push({ priority: "needed", text: "Retake both sides, with the card large and square in the frame." });
   }
   if (!front.centering.reliable || !back.centering.reliable) {
-    items.push({ priority: "needed", text: "Centering needs a square photo where the whole border is visible and the card is not tilted." });
+    items.push({ priority: "needed", text: "Show the whole border, without tilt." });
   }
   if (!reading.surface.reliable && !asked.has("surface")) {
-    items.push({ priority: "needed", text: "Add a close-up of the front surface under a lamp, tilted just enough to catch scratches without a white glare patch." });
+    items.push({ priority: "needed", text: "Add a surface close-up, without a glare patch." });
   }
   const wornCorner = reading.corners.some((corner) => corner.severity !== "none");
   if ((wornCorner || reading.focus !== "sharp") && !asked.has("corner")) {
-    items.push({ priority: wornCorner ? "needed" : "optional", text: "Add one close-up per corner that looks light. Include a corner you think is clean if you want that corner cleared." });
+    items.push({ priority: wornCorner ? "needed" : "optional", text: "Add a close-up of each light corner." });
   }
   if (reading.edges.some((edge) => edge.severity !== "none") && !asked.has("edge")) {
-    items.push({ priority: "optional", text: "Add a close-up of the whitened edge, with the colored border filling the frame." });
+    items.push({ priority: "optional", text: "Add a close-up of the whitened edge." });
   }
   return items.slice(0, 4);
 }

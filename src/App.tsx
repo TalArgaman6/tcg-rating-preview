@@ -1,19 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Report } from "./components/Report";
 import { collectFeatures } from "./lib/features";
 import { assessCard } from "./lib/grading/predict";
-import { searchCards } from "./lib/identity/catalog";
 import { readCardText } from "./lib/identity/readText";
 import { frameCard, renderPlate } from "./lib/cardFrame";
 import { fileToRaster, rasterToDataUrl } from "./lib/images";
-import { estimateMarket, preferredFinish } from "./lib/market/value";
-import { practiceBack, practiceFront } from "./lib/sampleCard";
+import { estimateMarket } from "./lib/market/value";
 import { analyzeCloseup, analyzeRaster } from "./lib/vision/analyze";
 import type { Raster } from "./lib/vision/raster";
 import type { CloseupKind, CloseupResult, Defect, FeatureFinding, MarketEstimate, Opinion, SideMetrics, TcgCard } from "./types";
 
 export interface Session {
-  practice: boolean;
   frontUrl: string;
   backUrl: string;
   frontBounds: { x: number; y: number; w: number; h: number };
@@ -37,9 +34,6 @@ export function App() {
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const searchAbort = useRef<AbortController | null>(null);
 
   async function inspectFiles() {
     if (!frontFile || !backFile) return;
@@ -51,7 +45,7 @@ export function App() {
       setWorking("Measuring the back");
       await pause();
       const back = await fileToRaster(backFile);
-      const next = buildSession(front, back, false);
+      const next = buildSession(front, back);
       setSession(next);
       setWorking("Reading the name and number");
       await identify(front, next);
@@ -62,77 +56,21 @@ export function App() {
     }
   }
 
-  async function inspectPractice() {
-    setError(null);
-    setWorking("Measuring the practice card");
-    await pause();
-    setSession(buildSession(practiceFront(), practiceBack(), true));
-    setWorking(null);
-  }
-
   async function identify(front: Raster, current: Session) {
     try {
       const text = await readCardText(front);
-      if (text.name?.toLowerCase() === "practice") return;
       const query = [text.name, text.number].filter(Boolean).join(" ");
       const note = query
-        ? `Read from the photo: ${query}. Confirm the printing before any price is used.`
-        : "No English name or collector number could be read. Search for the card if you want a price.";
+        ? `Read from the photo: ${query}.`
+        : "No English name or collector number could be read.";
       setSession((latest) => (latest ? { ...latest, ocrNote: note } : latest));
-      if (query) await lookup(query);
     } catch {
       setSession((latest) =>
         latest && latest === current
-          ? { ...latest, ocrNote: "The name could not be read. The grades do not depend on it. Search below if you want a market price." }
+          ? { ...latest, ocrNote: "The name could not be read. The grades do not depend on it." }
           : latest,
       );
     }
-  }
-
-  async function lookup(query: string) {
-    searchAbort.current?.abort();
-    const controller = new AbortController();
-    searchAbort.current = controller;
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const cards = await searchCards(query, controller.signal);
-      setSession((latest) => (latest ? { ...latest, candidates: cards } : latest));
-      if (cards.length === 0) setSearchError("No English-catalog card matched that search.");
-    } catch (caught) {
-      if (caught instanceof DOMException && caught.name === "AbortError") return;
-      setSearchError(caught instanceof Error ? caught.message : "The catalog could not be reached.");
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  function chooseCard(card: TcgCard) {
-    setSession((latest) => {
-      if (!latest) return latest;
-      const variant = preferredFinish(card, latest.front.surface.holoLimited);
-      const market = estimateMarket(card, variant);
-      return {
-        ...latest,
-        card,
-        variant,
-        market,
-        features: collectFeatures(latest.front, latest.back, latest.defects, card, market.status === "ready"),
-      };
-    });
-  }
-
-  function chooseVariant(variant: string) {
-    setSession((latest) => {
-      if (!latest) return latest;
-      const market = estimateMarket(latest.card, variant);
-      return {
-        ...latest,
-        variant,
-        market,
-        features: collectFeatures(latest.front, latest.back, latest.defects, latest.card, market.status === "ready"),
-      };
-    });
   }
 
   async function addCloseup(kind: CloseupKind, file: File) {
@@ -169,17 +107,11 @@ export function App() {
       {session ? (
         <Report
           session={session}
-          searching={searching}
-          searchError={searchError}
           working={working}
-          onSearch={(query) => void lookup(query)}
-          onSelect={chooseCard}
-          onVariant={chooseVariant}
           onCloseup={(kind, file) => void addCloseup(kind, file)}
           onReset={() => {
             setSession(null);
             setError(null);
-            setSearchError(null);
           }}
         />
       ) : (
@@ -191,21 +123,19 @@ export function App() {
           onFront={setFrontFile}
           onBack={setBackFile}
           onRun={() => void inspectFiles()}
-          onPractice={() => void inspectPractice()}
         />
       )}
     </div>
   );
 }
 
-function buildSession(frontRaster: Raster, backRaster: Raster, practice: boolean): Session {
+function buildSession(frontRaster: Raster, backRaster: Raster): Session {
   const frontVision = analyzeRaster(frontRaster, { side: "front", shortSide: Math.min(frontRaster.width, frontRaster.height) });
   const backVision = analyzeRaster(backRaster, { side: "back", shortSide: Math.min(backRaster.width, backRaster.height) });
   const defects = [...frontVision.defects, ...backVision.defects];
   const opinion = assessCard(frontVision.metrics, backVision.metrics, []);
   const market = estimateMarket(null, null);
   return {
-    practice,
     frontUrl: rasterToDataUrl(frontRaster),
     backUrl: rasterToDataUrl(backRaster),
     frontBounds: frontVision.bounds,
@@ -220,9 +150,7 @@ function buildSession(frontRaster: Raster, backRaster: Raster, practice: boolean
     card: null,
     variant: null,
     market,
-    ocrNote: practice
-      ? "This is a drawn practice card with a whitened corner, a print line, and a short whitened edge. It is not a real Pokémon card."
-      : "Looking for a name and number…",
+    ocrNote: "Looking for a name and number…",
   };
 }
 
@@ -234,7 +162,6 @@ function Upload({
   onFront,
   onBack,
   onRun,
-  onPractice,
 }: {
   frontFile: File | null;
   backFile: File | null;
@@ -243,7 +170,6 @@ function Upload({
   onFront: (file: File) => void;
   onBack: (file: File) => void;
   onRun: () => void;
-  onPractice: () => void;
 }) {
   return (
     <section className="intake">
@@ -261,9 +187,6 @@ function Upload({
         <div className="actions">
           <button type="button" className="primary" disabled={!frontFile || !backFile || Boolean(working)} onClick={onRun}>
             {working ?? "Read both sides"}
-          </button>
-          <button type="button" className="quiet" disabled={Boolean(working)} onClick={onPractice}>
-            Inspect a practice card
           </button>
         </div>
         {error ? <p className="error">{error}</p> : null}
